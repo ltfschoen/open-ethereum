@@ -150,7 +150,7 @@ impl<'x> OpenBlock<'x> {
 	///
 	/// NOTE Will check chain constraints and the uncle number but will NOT check
 	/// that the header itself is actually valid.
-	pub fn push_uncle(&mut self, valid_uncle_header: &Header) -> Result<(), BlockError> {
+	pub fn push_uncle(&mut self, valid_uncle_header: Header) -> Result<(), BlockError> {
 		let max_uncles = self.engine.maximum_uncle_count(self.block.header.number());
 		if self.block.uncles.len() + 1 > max_uncles {
 			return Err(BlockError::TooManyUncles(OutOfBounds{
@@ -161,23 +161,23 @@ impl<'x> OpenBlock<'x> {
 		}
 		// TODO: check number
 		// TODO: check not a direct ancestor (use last_hashes for that)
-		self.block.uncles.push(valid_uncle_header.clone());
+		self.block.uncles.push(valid_uncle_header);
 		Ok(())
 	}
 
 	/// Push a transaction into the block.
 	///
 	/// If valid, it will be executed, and archived together with the receipt.
-	pub fn push_transaction(&mut self, t: &SignedTransaction) -> Result<&Receipt, Error> {
+	pub fn push_transaction(&mut self, t: SignedTransaction) -> Result<&Receipt, Error> {
 		if self.block.transactions_set.contains(&t.hash()) {
 			return Err(TransactionError::AlreadyImported.into());
 		}
 
 		let env_info = self.block.env_info();
-		let outcome = self.block.state.apply(&env_info, self.engine.machine(), t, self.block.traces.is_enabled())?;
+		let outcome = self.block.state.apply(&env_info, self.engine.machine(), &t, self.block.traces.is_enabled())?;
 
 		self.block.transactions_set.insert(t.hash());
-		self.block.transactions.push(t.clone());
+		self.block.transactions.push(t);
 		if let Tracing::Enabled(ref mut traces) = self.block.traces {
 			traces.push(outcome.trace.into());
 		}
@@ -187,7 +187,7 @@ impl<'x> OpenBlock<'x> {
 
 	/// Push transactions onto the block.
 	#[cfg(not(feature = "slow-blocks"))]
-	fn push_transactions(&mut self, transactions: &[SignedTransaction]) -> Result<(), Error> {
+	fn push_transactions(&mut self, transactions: Vec<SignedTransaction>) -> Result<(), Error> {
 		for t in transactions {
 			self.push_transaction(t)?;
 		}
@@ -196,7 +196,7 @@ impl<'x> OpenBlock<'x> {
 
 	/// Push transactions onto the block.
 	#[cfg(feature = "slow-blocks")]
-	fn push_transactions(&mut self, transactions: &[SignedTransaction]) -> Result<(), Error> {
+	fn push_transactions(&mut self, transactions: Vec<SignedTransaction>) -> Result<(), Error> {
 		use std::time;
 
 		let slow_tx = option_env!("SLOW_TX_DURATION").and_then(|v| v.parse().ok()).unwrap_or(100);
@@ -409,9 +409,7 @@ impl Drain for SealedBlock {
 /// `PreVerified` block and Produces a new `LockedBlock` after applying all
 /// transactions and committing the state to disk.
 pub(crate) fn enact(
-	header: &Header,
-	transactions: &[SignedTransaction],
-	uncles: &[Header],
+	block: PreverifiedBlock,
 	engine: &dyn Engine,
 	tracing: bool,
 	db: StateDB,
@@ -419,15 +417,28 @@ pub(crate) fn enact(
 	last_hashes: Arc<LastHashes>,
 	factories: Factories,
 	is_epoch_begin: bool,
-) -> Result<LockedBlock, Error> {
+) -> Result<(LockedBlock, Bytes), (Error, Bytes)> {
 	// For trace log
-	let trace_state = if log_enabled!(target: "enact", ::log::Level::Trace) {
-		Some(State::from_existing(db.boxed_clone(), parent.state_root().clone(), engine.account_start_nonce(parent.number() + 1), factories.clone())?)
+	 let trace_state = if log_enabled!(target: "enact", ::log::Level::Trace) {
+		match State::from_existing(
+			db.boxed_clone(),
+			parent.state_root().clone(),
+			engine.account_start_nonce(parent.number() + 1),
+			factories.clone(),
+		) {
+			Ok(s) => Some(s),
+			Err(e) => return Err((e.into(), block.bytes)),
+		}
 	} else {
 		None
 	};
 
-	let mut b = OpenBlock::new(
+	let executive_author = match engine.executive_author(&block.header) {
+		Ok(author) => author,
+		Err(e) => return Err((e.into(), block.bytes)),
+	};
+
+	let mut b = match OpenBlock::new(
 		engine,
 		factories,
 		tracing,
@@ -436,33 +447,46 @@ pub(crate) fn enact(
 		last_hashes,
 		// Engine such as Clique will calculate author from extra_data.
 		// this is only important for executing contracts as the 'executive_author'.
-		engine.executive_author(header)?,
+		executive_author,
 		(3141562.into(), 31415620.into()),
 		vec![],
 		is_epoch_begin,
-	)?;
+	) {
+		Ok(b) => b,
+		Err(e) => return Err((e.into(), block.bytes)),
+	};
 
 	if let Some(ref s) = trace_state {
 		let env = b.env_info();
 		let root = s.root();
-		let author_balance = s.balance(&env.author)?;
+		let author_balance = match s.balance(&env.author) {
+			Ok(b) => b,
+			Err(e) => return Err((e.into(), block.bytes)),
+		};
 		trace!(target: "enact", "num={}, root={}, author={}, author_balance={}\n",
 				b.block.header.number(), root, env.author, author_balance);
 	}
 
-	b.populate_from(header);
-	b.push_transactions(transactions)?;
-
-	for u in uncles {
-		b.push_uncle(u)?;
+	b.populate_from(&block.header);
+	if let Err(e) = b.push_transactions(block.transactions) {
+		return Err((e.into(), block.bytes));
 	}
 
-	b.close_and_lock()
+	for u in block.uncles {
+		if let Err(e) = b.push_uncle(u) {
+			return Err((e.into(), block.bytes));
+		}
+	}
+
+	match b.close_and_lock() {
+		Err(e) => Err((e, block.bytes)),
+		Ok(l) => Ok((l, block.bytes)),
+	}
 }
 
 /// Enact the `PreVerified` block using `engine` on the database `db` with the given `parent` block header
 pub fn enact_verified(
-	block: &PreverifiedBlock,
+	block: PreverifiedBlock,
 	engine: &dyn Engine,
 	tracing: bool,
 	db: StateDB,
@@ -470,12 +494,10 @@ pub fn enact_verified(
 	last_hashes: Arc<LastHashes>,
 	factories: Factories,
 	is_epoch_begin: bool,
-) -> Result<LockedBlock, Error> {
+) -> Result<(LockedBlock, Bytes), (Error, Bytes)> {
 
 	enact(
-		&block.header,
-		&block.transactions,
-		&block.uncles,
+		block,
 		engine,
 		tracing,
 		db,
@@ -549,7 +571,7 @@ mod tests {
 		)?;
 
 		b.populate_from(&header);
-		b.push_transactions(&transactions)?;
+		b.push_transactions(transactions)?;
 
 		for u in block.uncles {
 			b.push_uncle(&u)?;

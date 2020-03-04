@@ -305,17 +305,17 @@ impl Importer {
 					continue;
 				}
 
-				match self.check_and_lock_block(&block, client) {
-					Ok((locked_block, pending)) => {
+				match self.check_and_lock_block(block, client) {
+					Ok((locked_block, block_bytes, pending)) => {
 						imported_blocks.push(hash);
 						let transactions_len = locked_block.transactions.len();
 						let gas_used = locked_block.header.gas_used().clone();
-						let route = self.commit_block(locked_block, encoded::Block::new(block.bytes), pending, client);
+						let route = self.commit_block(locked_block, encoded::Block::new(block_bytes), pending, client);
 						import_results.push(route);
 						client.report.write().accrue_block(gas_used, transactions_len);
 					}
-					Err(err) => {
-						self.bad_blocks.report(block.bytes, format!("{:?}", err));
+					Err((err, bytes)) => {
+						self.bad_blocks.report(bytes, err.to_string());
 						invalid_blocks.insert(hash);
 					},
 				}
@@ -360,55 +360,58 @@ impl Importer {
 		imported
 	}
 
-	fn check_and_lock_block(&self, block: &PreverifiedBlock, client: &Client) -> EthcoreResult<(LockedBlock, Option<PendingTransition>)> {
+	fn check_and_lock_block(
+		&self,
+		block: PreverifiedBlock,
+		client: &Client
+	) -> Result<(LockedBlock, Bytes, Option<PendingTransition>), (EthcoreError, Bytes)> {
 		let engine = &*self.engine;
-		let header = &block.header;
+		let header = block.header.clone();
 
 		// Check the block isn't so old we won't be able to enact it.
 		let best_block_number = client.chain.read().best_block_number();
-		if client.pruning_info().earliest_state > header.number() {
-			warn!(target: "client", "Block import failed for #{} ({})\nBlock is ancient (current best block: #{}).", header.number(), header.hash(), best_block_number);
-			return Err("Block is ancient".into());
+		if client.pruning_info().earliest_state > block.header.number() {
+			warn!(target: "client", "Block import failed for #{} ({})\nBlock is ancient (current best block: #{}).", block.header.number(), block.header.hash(), best_block_number);
+			return Err(("Block is ancient".into(), block.bytes));
 		}
 
 		// Check if parent is in chain
-		let parent = match client.block_header_decoded(BlockId::Hash(*header.parent_hash())) {
+		let parent = match client.block_header_decoded(BlockId::Hash(*block.header.parent_hash())) {
 			Some(h) => h,
 			None => {
-				warn!(target: "client", "Block import failed for #{} ({}): Parent not found ({}) ", header.number(), header.hash(), header.parent_hash());
-				return Err("Parent not found".into());
+				warn!(target: "client", "Block import failed for #{} ({}): Parent not found ({}) ", block.header.number(), block.header.hash(), block.header.parent_hash());
+				return Err(("Parent not found".into(), block.bytes));
 			}
 		};
 
 		let chain = client.chain.read();
 		// Verify Block Family
 		let verify_family_result = verification::verify_block_family(
-			&header,
 			&parent,
 			engine,
 			verification::FullFamilyParams {
-				block,
+				block: &block,
 				block_provider: &**chain,
 				client
 			},
 		);
 
 		if let Err(e) = verify_family_result {
-			warn!(target: "client", "Stage 3 block verification failed for #{} ({})\nError: {:?}", header.number(), header.hash(), e);
-			return Err(e);
+			warn!(target: "client", "Stage 3 block verification failed for #{} ({})\nError: {:?}", block.header.number(), block.header.hash(), e);
+			return Err((e, block.bytes));
 		};
 
-		let verify_external_result = engine.verify_block_external(&header);
+		let verify_external_result = engine.verify_block_external(&block.header);
 		if let Err(e) = verify_external_result {
-			warn!(target: "client", "Stage 4 block verification failed for #{} ({})\nError: {:?}", header.number(), header.hash(), e);
-			return Err(e);
+			warn!(target: "client", "Stage 4 block verification failed for #{} ({})\nError: {:?}", block.header.number(), block.header.hash(), e);
+			return Err((e, block.bytes));
 		};
 
 		// Enact Verified Block
-		let last_hashes = client.build_last_hashes(*header.parent_hash());
-		let db = client.state_db.read().boxed_clone_canon(header.parent_hash());
+		let last_hashes = client.build_last_hashes(*block.header.parent_hash());
+		let db = client.state_db.read().boxed_clone_canon(block.header.parent_hash());
 
-		let is_epoch_begin = chain.epoch_transition(parent.number(), *header.parent_hash()).is_some();
+		let is_epoch_begin = chain.epoch_transition(parent.number(), *block.header.parent_hash()).is_some();
 
 		let enact_result = enact_verified(
 			block,
@@ -421,11 +424,11 @@ impl Importer {
 			is_epoch_begin,
 		);
 
-		let mut locked_block = match enact_result {
-			Ok(b) => b,
-			Err(e) => {
+		let (mut locked_block, block_bytes) = match enact_result {
+			Ok((locked_block, block_bytes)) => (locked_block, block_bytes),
+			Err((e, bytes)) => {
 				warn!(target: "client", "Block import failed for #{} ({})\nError: {:?}", header.number(), header.hash(), e);
-				return Err(e);
+				return Err((e, bytes));
 			}
 		};
 
@@ -441,17 +444,20 @@ impl Importer {
 		// Final Verification
 		if let Err(e) = verification::verify_block_final(&header, &locked_block.header) {
 			warn!(target: "client", "Stage 5 block verification failed for #{} ({})\nError: {:?}", header.number(), header.hash(), e);
-			return Err(e);
+			return Err((e, block_bytes));
 		}
 
-		let pending = self.check_epoch_end_signal(
+		let pending = match self.check_epoch_end_signal(
 			&header,
 			&locked_block.receipts,
 			locked_block.state.db(),
 			client
-		)?;
+		) {
+			Ok(p) => p,
+			Err(e) => return Err((e, block_bytes)),
+		};
 
-		Ok((locked_block, pending))
+		Ok((locked_block, block_bytes, pending))
 	}
 
 	/// Import a block with transaction receipts.
@@ -2305,7 +2311,7 @@ impl ReopenBlock for Client {
 				if !block.uncles.iter().any(|header| header.hash() == h) {
 					let uncle = chain.block_header_data(&h).expect("find_uncle_hashes only returns hashes for existing headers; qed");
 					let uncle = uncle.decode().expect("decoding failure");
-					block.push_uncle(&uncle).expect("pushing up to maximum_uncle_count;
+					block.push_uncle(uncle).expect("pushing up to maximum_uncle_count;
 												push_uncle is not ok only if more than maximum_uncle_count is pushed;
 												so all push_uncle are Ok;
 												qed");
@@ -2346,7 +2352,7 @@ impl PrepareOpenBlock for Client {
 			.iter()
 			.take(engine.maximum_uncle_count(open_block.header.number()))
 			.for_each(|h| {
-				open_block.push_uncle(&h.decode().expect("decoding failure")).expect("pushing maximum_uncle_count;
+				open_block.push_uncle(h.decode().expect("decoding failure")).expect("pushing maximum_uncle_count;
 												open_block was just created;
 												push_uncle is not ok only if more than maximum_uncle_count is pushed;
 												so all push_uncle are Ok;

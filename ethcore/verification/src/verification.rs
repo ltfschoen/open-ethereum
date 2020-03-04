@@ -129,14 +129,13 @@ pub struct FullFamilyParams<'a, C: BlockInfo + CallContract + 'a> {
 
 /// Phase 3 verification. Check block information against parent and uncles.
 pub fn verify_block_family<C: BlockInfo + CallContract>(
-	header: &Header,
 	parent: &Header,
 	engine: &dyn Engine,
 	params: FullFamilyParams<C>
 ) -> Result<(), Error> {
 	// TODO: verify timestamp
-	verify_parent(&header, &parent, engine)?;
-	engine.verify_block_family(&header, &parent)?;
+	verify_parent(&params.block.header, &parent, engine)?;
+	engine.verify_block_family(&params.block.header, &parent)?;
 	verify_uncles(params.block, params.block_provider, engine)?;
 
 	for tx in &params.block.transactions {
