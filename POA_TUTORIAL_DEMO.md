@@ -1,6 +1,74 @@
-### Run Parity Ethereum Node
+### Run Parity Ethereum Node with Cross Compilation on "Big Endian" Hardware
 
-Reference: https://wiki.parity.io/Demo-PoA-tutorial.html
+#### Credit
+
+Thanks to the following who helped me with this:
+* Sergei Shulepov
+* Niklas Adolfsson (niklasad1)
+* David Plum (dvdplm)
+
+#### Goal
+
+The goal is to port the Open Ethereum client v2.8 to "big endian" architecture (like IBM Z mainframes), since issues (e.g. with serialisation and crypto) are being encountered because Open Ethereum implicitly assumes "little endian" architecture 
+
+#### Support for Big Endian Hardware in Open Ethereum
+
+We cannot test it on macOS, since modern versions of macOS support only Intel architectures, namely only x86_64, which is only little endian (LE), where endianess is a property of a hardware architecture not of an operating system. 
+
+Macintosh did have PowerPC big endian (BE) hardware in the past, however better targets might be ARM based, since some of them can be run in both BE and LE mode, at least theoretically.
+
+Credit: Sergei Shulepov.
+
+#### Obtaining Access to Test on Big Endian Hardware
+
+Initial thoughts were to try to access z/OS and Linux on IBM Z IBM Z mainframe, but https://www.ibm.com/it-infrastructure/z/education is only available to some recognized educational institutions, not open source.
+
+Then an attempt was made to register with VMware to obtain access to either a Stromasys Virtual SPARC Emulator or Virual Alpha Emulter for VMware Cloud which allows deploying emulators of this legacy BE hardware on AWS, as mentioned here https://aws.amazon.com/blogs/apn/re-hosting-sparc-alpha-or-other-legacy-systems-to-aws-with-stromasys/, however VMware registration does not work.
+
+The most feasible solution is to use "cross" (https://github.com/rust-embedded/cross), which allows for cross-compilation to test Rust crates on different architectures like BE, as mentioned in this Open Ethereum relevant issue https://github.com/paritytech/parity-common/issues/27.
+
+To build for BE on MIPS, your target should be `mips-unknown-linux-gnu`
+
+#### Setup Cross Compilation using Cross
+
+* Go to https://github.com/rust-embedded/cross#dependencies
+* Configure Cross.toml and Dockerfile in project's root folder
+* Run:
+
+```
+docker-compose up --build -d && docker exec -it $(docker ps -q) bash
+```
+
+* Then setup your environment for Cross with:
+
+```
+export PATH=$PATH:/root/.cargo/bin
+source $HOME/.cargo/env
+```
+
+If it worked successfully then when you run `rustc --print sysroot` it should output: `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu` (see https://github.com/rust-embedded/cross/issues/384)
+
+* Then inside the Docker container shell prompt, build Open Ethereum on MIPS (Big Endian) using Cross:
+
+```
+RUST_BACKTRACE=1 QEMU_STRACE=1 /root/.cargo/bin/cross run --target mips-unknown-linux-gnu --release --features final
+```
+
+> **ISSUE** The above command currently results in the following error that has been reported to get help here https://github.com/rust-embedded/cross/issues/385
+
+Note: The last command is the equivalent of `cargo build --release --features final` but using `cross` binary instead of `cargo`.
+
+#### Relevant Open Ethereum Issues
+
+A good first step to provide BE support to Open Ethereum would be this "ethash" issue, since "ethash" doesn't work for BE.
+
+https://github.com/paritytech/parity-common/issues/27
+
+Credit: Niklas Adolfsson
+
+There are other issues across the codebases that mention MIPS.
+
+#### Setup Open Ethereum Testnet
 
 * Install Open Ethereum dependencies
   ```
@@ -84,3 +152,9 @@ Reference: https://wiki.parity.io/Demo-PoA-tutorial.html
       ```
       ./target/release/parity --config node0.toml
       ```
+
+### References
+
+* https://wiki.parity.io/Demo-PoA-tutorial.html
+* https://stackoverflow.com/questions/31938282/is-there-any-bigendian-hardware-out-there
+* https://en.wikipedia.org/wiki/Comparison_of_platform_virtualization_software
