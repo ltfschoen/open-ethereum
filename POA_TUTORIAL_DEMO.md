@@ -36,7 +36,7 @@ To build for BE on MIPS, your target should be `mips-unknown-linux-gnu`
 * Run:
 
 ```
-docker-compose up --build -d && docker exec -it $(docker ps -q) bash
+docker-compose up --build -d && docker exec -it --privileged=true $(docker ps -q) bash
 ```
 
 * Then setup your environment for Cross with:
