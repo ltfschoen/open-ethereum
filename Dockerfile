@@ -7,6 +7,7 @@ RUN printf "Compiling Open Ethereum setup for testing with Big Endian" && \
   apt-get update && \
   apt-get install -y git vim cargo sudo && \
   curl https://sh.rustup.rs -sSf | sh -s -- -y && \
+  rustup update && \
   echo 'PATH="/root/.cargo/bin:$PATH";' >> ~/.bash_profile && . ~/.bash_profile && \
   . /root/.cargo/env && \
   rustup toolchain install nightly && \
