@@ -1,0 +1,33 @@
+[parity]
+# kovan
+chain = "demo-spec.json"
+base_path = "/Users/ls/Library/Application Support/io.parity.ethereum/0" # ~/Library/Application\ Support/io.parity.ethereum/
+db_path = "/Users/ls/Library/Application Support/io.parity.ethereum/0/chains"
+keys_path = "/Users/ls/Library/Application Support/io.parity.ethereum/0/keys"
+# no_persistent_txqueue = true
+[network]
+port = 30300
+[rpc]
+port = 8540
+interface = "0.0.0.0"
+# "all"
+apis = ["web3", "eth", "net", "personal", "parity", "parity_set", "traces", "rpc", "parity_accounts"]
+# hosts = "all"
+# cors = "all"
+[websockets]
+port = 8450
+[ui]
+port = 8180
+[account]
+password = ["node.pwds"]
+# password = "~/Library/Application\ Support/io.parity.ethereum/0/passwords/kovan/password-0xb2d354a6b5635e9d5837b8da3fc17fa64c0fd006.txt"
+unlock = ["0x004ec07d2329997267ec62b4166639513386f32e"]
+[mining]
+engine_signer = "0x00Bd138aBD70e2F00903268F3Db08f2D25677C9e"
+# force_sealing = true
+# gas_floor_target = 6666666
+# min_gas_price = 1
+reseal_on_txs = "none"
+[misc]
+# config = "dev"
+logging = "sync=error,engine=trace,own_tx=trace,tx_queue=trace,miner=trace"

@@ -1,0 +1,10 @@
+[target.mips-unknown-linux-gnu]
+# If the below is not specified then Docker will check on Docker Hub
+# image = "my/image:tag"
+
+# Pass through environment variables to Docker container
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+]

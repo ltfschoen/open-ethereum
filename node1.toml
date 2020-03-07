@@ -1,0 +1,30 @@
+[parity]
+chain = "demo-spec.json"
+base_path = "/Users/ls/Library/Application Support/io.parity.ethereum/1"
+db_path = "/Users/ls/Library/Application Support/io.parity.ethereum/1/chains"
+keys_path = "/Users/ls/Library/Application Support/io.parity.ethereum/1/keys"
+# no_persistent_txqueue = true
+[network]
+port = 30301
+[rpc]
+port = 8541
+interface = "0.0.0.0"
+apis = ["web3", "eth", "net", "personal", "parity", "parity_set", "traces", "rpc", "parity_accounts"]
+# hosts = "all"
+# cors = "all"
+[ui]
+port = 8181
+[account]
+password = ["node.pwds"]
+[mining]
+engine_signer = "0x00aa39d30f0d20ff03a22ccfc30b7efbfca597c2"
+# force_sealing = true
+# gas_floor_target = 6666666
+# min_gas_price = 1
+reseal_on_txs = "none"
+[websockets]
+port = 8451
+[ipc]
+disable = true
+[misc]
+logging = "sync=error,engine=trace,own_tx=trace,tx_queue=trace,miner=trace"

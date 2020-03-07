@@ -1,0 +1,13 @@
+version: '3'
+services:
+  sandbox:
+    # uses image build from Dockerfile in current directory
+    build:
+      context: .
+    ports:
+      # forward exposed on port 3000 to port 3001 on host machine
+      - "3001:3000"
+    image: open_ethereum_sandbox:tag
+    volumes:
+      - .:/code
+    command: tail -f /dev/null

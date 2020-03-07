@@ -1,5 +1,7 @@
 ![Parity Ethereum](docs/logo-parity-ethereum.svg)
 
+<h2 align="center" style="color: red"><a href="./POA_TUTORIAL_DEMO.md">View Luke's PoA Tutorial Setup</a></h2>
+
 <h2 align="center">The Fastest and most Advanced Ethereum Client.</h2>
 
 <p align="center"><strong><a href="https://github.com/OpenEthereum/open-ethereum/releases/latest">» Download the latest release «</a></strong></p>
