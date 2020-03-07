@@ -48,6 +48,11 @@ source $HOME/.cargo/env
 
 If it worked successfully then when you run `rustc --print sysroot` it should output: `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu` (see https://github.com/rust-embedded/cross/issues/384)
 
+* Then start Docker within the Docker container with:
+```
+sudo service docker start
+```
+
 * Then inside the Docker container shell prompt, build Open Ethereum on MIPS (Big Endian) using Cross:
 
 ```
